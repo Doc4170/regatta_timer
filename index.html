@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Regatta Finish Timer</title>
+<style>
+:root{--bg:#f4f7fa;--card:#fff;--ink:#12263a;--mute:#5d7184;--line:#d9e2ea;--acc:#0b6fb8;--accink:#fff;--ok:#1b8a5a;--bad:#c23b3b;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0d1823;--card:#152635;--ink:#e8f0f7;--mute:#92a6b8;--line:#25394b;--acc:#4aa8ec;--accink:#06131e;--ok:#4cc38a;--bad:#ef7b7b}}
+:root[data-theme="dark"]{--bg:#0d1823;--card:#152635;--ink:#e8f0f7;--mute:#92a6b8;--line:#25394b;--acc:#4aa8ec;--accink:#06131e;--ok:#4cc38a;--bad:#ef7b7b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:560px;margin:0 auto;padding:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:10px}
+#clock{font-size:clamp(44px,15vw,76px);font-variant-numeric:tabular-nums;font-weight:700;text-align:center;letter-spacing:-.02em}
+#state{text-align:center;color:var(--mute);font-size:14px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;padding:12px 14px;cursor:pointer;min-height:50px;flex:1}
+button:disabled{opacity:.45}
+button.p{background:var(--acc);color:var(--accink);border-color:var(--acc);font-weight:700}
+button.on{background:var(--ok);color:#fff;border-color:var(--ok)}
+button.warn{background:var(--bad);color:#fff;border-color:var(--bad)}
+input{font:inherit;font-size:22px;flex:3;min-width:0;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);min-height:50px}
+#heard{color:var(--mute);font-size:14px;margin-top:8px;min-height:1.3em;word-break:break-word}
+#msg{margin-top:6px;font-size:17px;font-weight:600;min-height:1.4em}
+#msg.ok{color:var(--ok)}#msg.err{color:var(--bad)}
+#note{font-size:13px;color:var(--bad);margin-top:6px}
+.wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:9px 5px;border-bottom:1px solid var(--line)}
+th{color:var(--mute);font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+td.sail{font-weight:700;font-size:20px}
+tr.new td{background:color-mix(in srgb,var(--ok) 22%,transparent)}
+td button{padding:2px 10px;min-height:36px;flex:none}
+.empty{color:var(--mute);text-align:center;padding:14px}
+textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px}
+.h{border-top:1px solid var(--line);padding:10px 0}.h summary{cursor:pointer;font-weight:600}.h pre{white-space:pre-wrap;font:13px ui-monospace,monospace;margin:8px 0}
+.help{color:var(--mute);font-size:13px;line-height:1.5;margin-top:8px}
+</style>
+</head>
+<body>
+<main>
+<div class="card">
+  <div id="clock">00:00:00.0</div>
+  <div id="state"></div>
+</div>
+
+<div class="card">
+  <div class="row">
+    <button class="p" id="startBtn">Start race</button>
+    <button id="stopBtn">Stop timer</button>
+    <button id="micBtn">🎤 Voice off</button>
+  </div>
+  <div id="msg"></div>
+  <div id="heard"></div>
+  <div id="note" hidden></div>
+  <div class="help">Say: “start race”, then each sail number. Pause a second or say “next” between boats. “Delete 1620”, “undo”, “stop”, “reset race”.</div>
+</div>
+
+<div class="card">
+  <div class="row">
+    <input id="sail" inputmode="numeric" placeholder="Sail number" aria-label="Sail number">
+    <button class="p" id="addBtn">Finish</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="wrap"><table>
+    <thead><tr><th>Pos</th><th>Sail</th><th>Elapsed</th><th>Clock</th><th></th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table></div>
+  <div class="row" style="margin-top:10px">
+    <button id="undoBtn">Undo last</button>
+    <button id="copyBtn">Copy results</button>
+    <button id="resetBtn">Reset race</button>
+  </div>
+  <textarea id="out" hidden readonly></textarea>
+  </div>
+  <div class="card" id="histCard" hidden>
+  <div class="row" style="align-items:center;justify-content:space-between"><b>History</b><button id="clearHist" style="flex:none">Clear history</button></div>
+  <div id="hist"></div>
+</div>
+</main>
+
+<script>
+(function(){
+  var HKEY="regatta-history-v1",hist=[],KEY="regatta-v2",startTs=null,stopTs=null,finishes=[],timer=null,rec=null,listening=false,lastNew=-1,wake=null,actx=null;
+  var $=function(id){return document.getElementById(id)};
+  var TZ=(function(){try{return Intl.DateTimeFormat().resolvedOptions().timeZone}catch(e){return "local time"}})();
+  var p2=function(n){return n<10?"0"+n:""+n};
+
+  function save(){try{localStorage.setItem(KEY,JSON.stringify({startTs:startTs,stopTs:stopTs,finishes:finishes}))}catch(e){}}
+  function load(){try{var d=JSON.parse(localStorage.getItem(KEY)||"null");if(d){startTs=d.startTs;stopTs=d.stopTs||null;finishes=d.finishes||[]}}catch(e){}}
+  function fmt(ms){if(ms<0)ms=0;var t=Math.floor(ms/100),d=t%10,s=Math.floor(t/10)%60,m=Math.floor(t/600)%60,h=Math.floor(t/36000);return p2(h)+":"+p2(m)+":"+p2(s)+"."+d}
+  function clk(ts){return new Date(ts).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false})}
+  function msg(t,kind){var m=$("msg");m.textContent=t;m.className=kind||""}
+
+  function loadHist(){try{hist=JSON.parse(localStorage.getItem(HKEY)||"[]")||[]}catch(e){hist=[]}}
+  function saveHist(){try{localStorage.setItem(HKEY,JSON.stringify(hist))}catch(e){}}
+  function raceText(r){return ["Regatta results · start "+new Date(r.startTs).toLocaleDateString()+" "+clk(r.startTs)+" ("+TZ+")","Pos,Sail,Elapsed,Clock"].concat(r.finishes.map(function(f,i){return (i+1)+","+f.sail+","+fmt(f.ms)+","+clk(f.t)})).join("\n")}
+  function archive(){if(startTs&&finishes.length){hist.unshift({id:Date.now(),startTs:startTs,stopTs:stopTs,finishes:finishes});saveHist();renderHist()}}
+  function arm(b,label,fn){
+    if(!b.dataset.arm){b.dataset.arm="1";b.textContent="Tap again";b.className="warn";setTimeout(function(){delete b.dataset.arm;b.textContent=label;b.className=""},4000);return}
+    delete b.dataset.arm;b.textContent=label;b.className="";fn();
+  }
+  function renderHist(){
+    var hc=$("histCard"),box=$("hist");hc.hidden=!hist.length;box.innerHTML="";
+    hist.forEach(function(r,idx){
+      var d=document.createElement("details");d.className="h";
+      var s=document.createElement("summary");s.textContent="Race "+(hist.length-idx)+" · "+new Date(r.startTs).toLocaleDateString()+" "+clk(r.startTs)+" · "+r.finishes.length+" boats";d.appendChild(s);
+      var pre=document.createElement("pre");pre.textContent=raceText(r);d.appendChild(pre);
+      var row=document.createElement("div");row.className="row";
+      var c=document.createElement("button");c.textContent="Copy";
+      c.onclick=function(){try{navigator.clipboard.writeText(raceText(r)).then(function(){msg("Race copied.","ok")},function(){msg("Select the text to copy.")})}catch(e){msg("Select the text to copy.")}};
+      var x=document.createElement("button");x.textContent="Delete race";
+      x.onclick=function(){arm(x,"Delete race",function(){hist.splice(idx,1);saveHist();renderHist()})};
+      row.appendChild(c);row.appendChild(x);d.appendChild(row);box.appendChild(d);
+    });
+  }
+
+  function beep(){
+    try{if(!actx)return;var o=actx.createOscillator(),g=actx.createGain();o.frequency.value=880;g.gain.value=.15;o.connect(g);g.connect(actx.destination);o.start();o.stop(actx.currentTime+.12)}catch(e){}
+    try{navigator.vibrate&&navigator.vibrate(60)}catch(e){}
+  }
+
+  function tick(){$("clock").textContent=fmt((stopTs||Date.now())-startTs)}
+  function runTimer(){clearInterval(timer);if(startTs&&!stopTs)timer=setInterval(tick,100);if(startTs)tick();else $("clock").textContent="00:00:00.0"}
+
+  function startRace(){
+    if(startTs){msg("Race is already running.","err");return}
+    startTs=Date.now();stopTs=null;finishes=[];lastNew=-1;save();runTimer();render();beep();
+    msg("Race started at "+clk(startTs),"ok");
+  }
+  function stopRace(){
+    if(!startTs||stopTs)return;
+    stopTs=Date.now();save();runTimer();render();msg("Timer stopped at "+fmt(stopTs-startTs),"ok");
+  }
+  function doReset(){
+    archive();
+    startTs=null;stopTs=null;finishes=[];lastNew=-1;save();runTimer();render();msg("Race reset.","ok");
+  }
+  function norm(s){return String(s).replace(/\D/g,"").replace(/^0+(?=\d)/,"")}
+  function addFinish(sail,at){
+    sail=norm(sail);
+    if(!sail)return;
+    if(!startTs){msg("Start the race first.","err");return}
+    if(stopTs){msg("Timer is stopped. Reset to run a new race.","err");return}
+    for(var i=0;i<finishes.length;i++)if(finishes[i].sail===sail){msg("Sail "+sail+" already finished at "+fmt(finishes[i].ms),"err");return}
+    var t=at||Date.now();
+    finishes.push({sail:sail,ms:Math.max(0,t-startTs),t:t});
+    lastNew=finishes.length-1;save();render();beep();
+    msg("✓ Sail "+sail+" · "+fmt(t-startTs),"ok");
+  }
+  function removeSail(sail){
+    sail=norm(sail);
+    for(var i=0;i<finishes.length;i++)if(finishes[i].sail===sail){finishes.splice(i,1);lastNew=-1;save();render();msg("Deleted sail "+sail,"ok");return}
+    msg("Sail "+sail+" isn’t in the results.","err");
+  }
+  function undo(){if(!finishes.length){msg("Nothing to undo.","err");return}var f=finishes.pop();lastNew=-1;save();render();msg("Removed sail "+f.sail,"ok")}
+
+  function render(){
+    $("startBtn").disabled=!!startTs;
+    $("stopBtn").disabled=!startTs||!!stopTs;
+    $("state").textContent=startTs?(stopTs?"Stopped":"Running")+" · started "+clk(startTs)+" ("+TZ+") · "+finishes.length+" finished":"Ready · times shown in "+TZ;
+    var tb=$("rows");tb.innerHTML="";
+    if(!finishes.length){var tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=5;td.className="empty";td.textContent="No finishers yet";tr.appendChild(td);tb.appendChild(tr);return}
+    finishes.forEach(function(f,i){
+      var tr=document.createElement("tr");if(i===lastNew)tr.className="new";
+      [i+1,f.sail,fmt(f.ms),clk(f.t)].forEach(function(v,j){var td=document.createElement("td");td.textContent=v;if(j===1)td.className="sail";tr.appendChild(td)});
+      var td=document.createElement("td"),b=document.createElement("button");b.textContent="✕";b.setAttribute("aria-label","Remove sail "+f.sail);
+      b.onclick=function(){finishes.splice(i,1);lastNew=-1;save();render()};td.appendChild(b);tr.appendChild(td);tb.appendChild(tr);
+    });
+  }
+
+  /* ---- speech parsing ---- */
+  var U={zero:0,oh:0,o:0,one:1,won:1,two:2,to:2,too:2,three:3,four:4,for:4,five:5,six:6,seven:7,eight:8,nine:9};
+  var T={ten:10,eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,sixteen:16,seventeen:17,eighteen:18,nineteen:19};
+  var D={twenty:2,thirty:3,forty:4,fifty:5,sixty:6,seventy:7,eighty:8,ninety:9};
+  function parse(text){
+    var s=text.toLowerCase().replace(/(\d)[,\s](?=\d{3}\b)/g,"$1").replace(/[^a-z0-9]+/g," ").trim();
+    var tk=s?s.split(" "):[],cmds=[],cur="",del=false;
+    function emit(n){cmds.push({c:del?"del":"fin",n:n});del=false}
+    function flush(){if(cur){emit(cur);cur=""}}
+    for(var i=0;i<tk.length;i++){
+      var t=tk[i];
+      if(/^\d+$/.test(t)){flush();emit(t)}
+      else if(U.hasOwnProperty(t))cur+=U[t];
+      else if(T.hasOwnProperty(t))cur+=T[t];
+      else if(D.hasOwnProperty(t)){cur+=D[t];var n=tk[i+1];if(n&&U.hasOwnProperty(n)&&U[n]>0){cur+=U[n];i++}else cur+="0"}
+      else if(t==="start"||t==="go"){flush();cmds.push({c:"start"})}
+      else if(t==="stop"){flush();cmds.push({c:"stop"})}
+      else if(t==="reset"){flush();cmds.push({c:"reset"})}
+      else if(t==="undo"){flush();cmds.push({c:"undo"})}
+      else if(t==="delete"||t==="remove"){flush();del=true}
+      else flush();
+    }
+    flush();return cmds;
+  }
+  function handleSpeech(text,at){
+    $("heard").textContent="Heard: "+text;
+    parse(text).forEach(function(k){
+      if(k.c==="start")startRace();else if(k.c==="stop")stopRace();else if(k.c==="reset")doReset();
+      else if(k.c==="undo")undo();else if(k.c==="del")removeSail(k.n);else addFinish(k.n,at);
+    });
+  }
+
+  /* ---- voice engine: commits after a 1 s pause, stamps when words first heard ---- */
+  var committed={},stampAt={},pend={i:-1,txt:""},pendT=null;
+  function rest(t,c){return t.indexOf(c)===0?t.slice(c.length):t}
+  function onSpeech(e){
+    var now=Date.now();clearTimeout(pendT);
+    for(var i=e.resultIndex;i<e.results.length;i++){
+      var res=e.results[i],txt=res[0].transcript,nw=rest(txt,committed[i]||"");
+      if(!nw.trim()){if(res.isFinal){delete committed[i];delete stampAt[i]}continue}
+      if(stampAt[i]===undefined)stampAt[i]=now;
+      if(res.isFinal){handleSpeech(nw,stampAt[i]);delete committed[i];delete stampAt[i]}
+      else{pend.i=i;pend.txt=txt}
+    }
+    if(pend.i>=0)pendT=setTimeout(function(){
+      var i=pend.i,t=pend.txt;pend.i=-1;if(i<0)return;
+      var nw=rest(t,committed[i]||"");
+      if(nw.trim())handleSpeech(nw,stampAt[i]||Date.now());
+      committed[i]=t;delete stampAt[i];
+    },1000);
+  }
+  function setupVoice(){
+    var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    if(!SR){msg("Voice isn’t supported in this browser. Use Chrome or Safari, or type sail numbers.","err");return null}
+    var r=new SR();r.continuous=true;r.interimResults=true;r.lang="en-AU";
+    r.onresult=onSpeech;
+    r.onerror=function(e){
+      if(e.error==="not-allowed"||e.error==="service-not-allowed"){
+        listening=false;updMic();
+        msg("Mic blocked ("+e.error+"). Allow it in browser settings, or this page is inside a frame that blocks it. Use your keyboard’s mic key in the sail box.","err");
+      }else if(e.error==="network")msg("Voice needs an internet connection.","err");
+      else if(e.error==="audio-capture")msg("No microphone found.","err");
+    };
+    r.onend=function(){
+      committed={};stampAt={};pend.i=-1;
+      if(listening)setTimeout(function(){if(listening){try{r.start()}catch(e){}}},250);
+    };
+    return r;
+  }
+  function updMic(){var b=$("micBtn");b.textContent=listening?"🎤 Listening…":"🎤 Voice off";b.className=listening?"on":""}
+  function keepAwake(on){
+    try{
+      if(on&&navigator.wakeLock)navigator.wakeLock.request("screen").then(function(w){wake=w},function(){});
+      else if(!on&&wake){wake.release();wake=null}
+    }catch(e){}
+  }
+  document.addEventListener("visibilitychange",function(){if(listening&&document.visibilityState==="visible")keepAwake(true)});
+
+  $("micBtn").onclick=function(){
+    try{if(!actx)actx=new (window.AudioContext||window.webkitAudioContext)();if(actx.state==="suspended")actx.resume()}catch(e){}
+    if(!rec)rec=setupVoice();
+    if(!rec)return;
+    if(listening){listening=false;rec.stop();updMic();keepAwake(false);msg("Voice off.");return}
+    try{rec.start();listening=true;updMic();keepAwake(true);msg("Listening. Say “start race”.")}
+    catch(e){msg("Couldn’t start the microphone.","err")}
+  };
+
+  $("clearHist").onclick=function(){var b=$("clearHist");arm(b,"Clear history",function(){hist=[];saveHist();renderHist();msg("History cleared.","ok")})};
+  $("startBtn").onclick=startRace;
+  $("stopBtn").onclick=stopRace;
+  $("undoBtn").onclick=undo;
+  $("addBtn").onclick=function(){var v=$("sail").value.trim();if(v){addFinish(v);$("sail").value=""}$("sail").focus()};
+  $("sail").addEventListener("keydown",function(e){if(e.key==="Enter")$("addBtn").click()});
+  $("resetBtn").onclick=function(){
+    var b=$("resetBtn");
+    if(!b.dataset.arm){b.dataset.arm="1";b.textContent="Tap again to confirm";b.className="warn";
+      setTimeout(function(){delete b.dataset.arm;b.textContent="Reset race";b.className=""},4000);return}
+    delete b.dataset.arm;b.textContent="Reset race";b.className="";doReset();
+  };
+  $("copyBtn").onclick=function(){
+    var head="Regatta results"+(startTs?" · start "+new Date(startTs).toLocaleDateString()+" "+clk(startTs)+" ("+TZ+")":"");
+    var txt=[head,"Pos,Sail,Elapsed,Clock"].concat(finishes.map(function(f,i){return (i+1)+","+f.sail+","+fmt(f.ms)+","+clk(f.t)})).join("\n");
+    var o=$("out");o.value=txt;o.hidden=false;o.select();
+    try{navigator.clipboard.writeText(txt).then(function(){msg("Results copied.","ok")},function(){msg("Select the text below to copy.")})}catch(e){msg("Select the text below to copy.")}
+  };
+
+  if(location.protocol!=="https:"){var n=$("note");n.hidden=false;n.textContent="This page isn’t on https, so the browser may ask for the microphone again and again. Host the file on an https address (e.g. Netlify Drop) to fix that."}
+  load();loadHist();runTimer();render();renderHist();
+})();
+</script>
+</body>
+</html>
