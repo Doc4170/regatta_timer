@@ -48,13 +48,13 @@ textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace
 <div class="card">
   <div class="row">
     <button class="p" id="startBtn">Start race</button>
-    <button id="stopBtn">Stop timer</button>
+    <button id="stopBtn">Finish race</button>
     <button id="micBtn">🎤 Voice off</button>
   </div>
   <div id="msg"></div>
   <div id="heard"></div>
   <div id="note" hidden></div>
-  <div class="help">Say: “start race”, then each sail number. Pause a second or say “next” between boats. “1620 DQ” or “398 DNS” marks a boat. A DQ boat can still get a finish time and is placed after all other boats. “Delete 1620”, “undo”, “stop”, “reset race”.</div>
+  <div class="help">Say: “start race”, then each sail number. Pause a second or say “next” between boats. “1620 DQ” or “398 DNS” marks a boat. A DQ boat can still get a finish time and is placed after all other boats. “Delete 1620”, “undo”, “finish race” (stops the timer), “reset race”. Afterwards say “position 4 boat 1620” to move a boat. Times stay with the position, only the boat number moves.</div>
 </div>
 
 <div class="card">
@@ -63,6 +63,11 @@ textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace
     <button class="p" id="addBtn">Finish</button>
     <button id="dnsBtn">DNS</button>
     <button id="dqBtn">DQ</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <input id="posIn" inputmode="numeric" placeholder="Position" aria-label="Position">
+    <input id="posSail" inputmode="numeric" placeholder="Boat" aria-label="Boat number">
+    <button id="posBtn">Set position</button>
   </div>
 </div>
 
@@ -158,6 +163,20 @@ textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace
     for(var i=0;i<finishes.length;i++)if(finishes[i].sail===sail){finishes.splice(i,1);lastNew=-1;save();render();msg("Deleted sail "+sail,"ok");return}
     msg("Sail "+sail+" isn’t in the results.","err");
   }
+  var snap=null;
+  function setPosition(p,sail){
+    sail=norm(sail);p=parseInt(p,10);
+    var list=ord(finishes).filter(function(o){return !o.f.status});
+    if(!sail||!p||p<1||p>list.length){msg("Position "+p+" doesn’t exist. "+list.length+" boats finished.","err");return}
+    var target=list[p-1].f,rec=null;
+    finishes.forEach(function(f){if(f.sail===sail)rec=f});
+    if(rec&&rec.status){msg("Sail "+sail+" is marked "+rec.status+". Delete it first.","err");return}
+    if(rec===target){msg("Sail "+sail+" is already in position "+p+".","err");return}
+    var before=JSON.stringify(finishes),old=target.sail,note;
+    if(rec){var p0=list.map(function(o){return o.f}).indexOf(rec)+1;rec.sail=old;target.sail=sail;note="Sail "+sail+" now position "+p+", sail "+old+" now position "+p0}
+    else{target.sail=sail;note="Position "+p+" is now sail "+sail+" (sail "+old+" removed)"}
+    snap={b:before,a:JSON.stringify(finishes)};lastNew=finishes.indexOf(target);save();render();beep();msg(note,"ok");
+  }
   function markSail(sail,s){
     var rec=null,i;
     if(sail==null||sail===""){i=finishes.length-1;rec=finishes[i];if(!rec){msg("No boat to mark yet.","err");return}sail=rec.sail}
@@ -167,7 +186,7 @@ textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace
     lastNew=i;save();render();beep();
     msg("Sail "+sail+" marked "+s+(rec&&s==="DQ"&&rec.ms!=null?" · keeps finish time "+fmt(rec.ms):""),"ok");
   }
-  function undo(){if(!finishes.length){msg("Nothing to undo.","err");return}var f=finishes.pop();lastNew=-1;save();render();msg("Removed sail "+f.sail,"ok")}
+  function undo(){if(snap&&JSON.stringify(finishes)===snap.a){finishes=JSON.parse(snap.b);snap=null;lastNew=-1;save();render();msg("Position change undone.","ok");return}if(!finishes.length){msg("Nothing to undo.","err");return}var f=finishes.pop();lastNew=-1;save();render();msg("Removed sail "+f.sail,"ok")}
 
   function ord(list){
     var g=function(x){return x.f.status==="DNS"?3:x.f.status==="DQ"?(x.f.ms!=null?1:2):0};
@@ -198,8 +217,8 @@ textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace
   var D={twenty:2,thirty:3,forty:4,fifty:5,sixty:6,seventy:7,eighty:8,ninety:9};
   function parse(text){
     var s=text.toLowerCase().replace(/(\d)[,\s](?=\d{3}\b)/g,"$1").replace(/[^a-z0-9]+/g," ").trim().replace(/\bd n s\b/g,"dns").replace(/\bd q\b/g,"dq").replace(/\bdisqualif\w*/g,"dq").replace(/\bdid not start\b/g,"dns");
-    var tk=s?s.split(" "):[],cmds=[],cur="",del=false,st=null;
-    function emit(n){if(del)cmds.push({c:"del",n:n});else if(st)cmds.push({c:"mark",n:n,s:st});else cmds.push({c:"fin",n:n});del=false;st=null}
+    var tk=s?s.split(" "):[],cmds=[],cur="",del=false,st=null,pm=0,pv=null;
+    function emit(n){if(pm===1){pv=n;pm=2;return}if(pm===2){cmds.push({c:"pos",p:pv,n:n});pm=0;return}if(del)cmds.push({c:"del",n:n});else if(st)cmds.push({c:"mark",n:n,s:st});else cmds.push({c:"fin",n:n});del=false;st=null}
     function flush(){if(cur){emit(cur);cur=""}}
     for(var i=0;i<tk.length;i++){
       var t=tk[i];
@@ -208,6 +227,8 @@ textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace
       else if(T.hasOwnProperty(t))cur+=T[t];
       else if(D.hasOwnProperty(t)){cur+=D[t];var n=tk[i+1];if(n&&U.hasOwnProperty(n)&&U[n]>0){cur+=U[n];i++}else cur+="0"}
       else if(t==="dns"||t==="dq"){var S=t.toUpperCase();if(cur){var m=cur;cur="";cmds.push({c:"mark",n:m,s:S})}else{var lc=cmds[cmds.length-1];if(lc&&lc.c==="fin"){lc.c="mark";lc.s=S}else st=S}}
+      else if(t==="position"||t==="place"){flush();pm=1}
+      else if(t==="finish"&&tk[i+1]==="race"){flush();cmds.push({c:"stop"});i++}
       else if(t==="start"||t==="go"){flush();cmds.push({c:"start"})}
       else if(t==="stop"){flush();cmds.push({c:"stop"})}
       else if(t==="reset"){flush();cmds.push({c:"reset"})}
@@ -221,7 +242,7 @@ textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace
     $("heard").textContent="Heard: "+text;
     parse(text).forEach(function(k){
       if(k.c==="start")startRace();else if(k.c==="stop")stopRace();else if(k.c==="reset")doReset();
-      else if(k.c==="undo")undo();else if(k.c==="mark")markSail(k.n,k.s);else if(k.c==="del")removeSail(k.n);else addFinish(k.n,at);
+      else if(k.c==="undo")undo();else if(k.c==="pos")setPosition(k.p,k.n);else if(k.c==="mark")markSail(k.n,k.s);else if(k.c==="del")removeSail(k.n);else addFinish(k.n,at);
     });
   }
 
@@ -285,6 +306,7 @@ textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace
   $("stopBtn").onclick=stopRace;
   $("undoBtn").onclick=undo;
   $("addBtn").onclick=function(){var v=$("sail").value.trim();if(v){addFinish(v);$("sail").value=""}$("sail").focus()};
+  $("posBtn").onclick=function(){var p=+$("posIn").value,s=$("posSail").value.trim();if(p&&s){setPosition(p,s);$("posIn").value="";$("posSail").value=""}};
   $("dnsBtn").onclick=function(){var v=$("sail").value.trim();if(v){markSail(v,"DNS");$("sail").value=""}$("sail").focus()};
   $("dqBtn").onclick=function(){var v=$("sail").value.trim();if(v){markSail(v,"DQ");$("sail").value=""}$("sail").focus()};
   $("sail").addEventListener("keydown",function(e){if(e.key==="Enter")$("addBtn").click()});
