@@ -54,13 +54,15 @@ textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace
   <div id="msg"></div>
   <div id="heard"></div>
   <div id="note" hidden></div>
-  <div class="help">Say: “start race”, then each sail number. Pause a second or say “next” between boats. “Delete 1620”, “undo”, “stop”, “reset race”.</div>
+  <div class="help">Say: “start race”, then each sail number. Pause a second or say “next” between boats. “1620 DQ” or “398 DNS” marks a boat. A DQ boat can still get a finish time and is placed after all other boats. “Delete 1620”, “undo”, “stop”, “reset race”.</div>
 </div>
 
 <div class="card">
   <div class="row">
     <input id="sail" inputmode="numeric" placeholder="Sail number" aria-label="Sail number">
     <button class="p" id="addBtn">Finish</button>
+    <button id="dnsBtn">DNS</button>
+    <button id="dqBtn">DQ</button>
   </div>
 </div>
 
@@ -97,7 +99,7 @@ textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace
 
   function loadHist(){try{hist=JSON.parse(localStorage.getItem(HKEY)||"[]")||[]}catch(e){hist=[]}}
   function saveHist(){try{localStorage.setItem(HKEY,JSON.stringify(hist))}catch(e){}}
-  function raceText(r){return ["Regatta results · start "+new Date(r.startTs).toLocaleDateString()+" "+clk(r.startTs)+" ("+TZ+")","Pos,Sail,Elapsed,Clock"].concat(r.finishes.map(function(f,i){return (i+1)+","+f.sail+","+fmt(f.ms)+","+clk(f.t)})).join("\n")}
+  function raceText(r){return ["Regatta results · start "+new Date(r.startTs).toLocaleDateString()+" "+clk(r.startTs)+" ("+TZ+")","Pos,Sail,Elapsed,Clock"].concat(rowsText(r.finishes)).join("\n")}
   function archive(){if(startTs&&finishes.length){hist.unshift({id:Date.now(),startTs:startTs,stopTs:stopTs,finishes:finishes});saveHist();renderHist()}}
   function arm(b,label,fn){
     if(!b.dataset.arm){b.dataset.arm="1";b.textContent="Tap again";b.className="warn";setTimeout(function(){delete b.dataset.arm;b.textContent=label;b.className=""},4000);return}
@@ -128,7 +130,7 @@ textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace
 
   function startRace(){
     if(startTs){msg("Race is already running.","err");return}
-    startTs=Date.now();stopTs=null;finishes=[];lastNew=-1;save();runTimer();render();beep();
+    startTs=Date.now();stopTs=null;finishes=finishes.filter(function(f){return f.status});lastNew=-1;save();runTimer();render();beep();
     msg("Race started at "+clk(startTs),"ok");
   }
   function stopRace(){
@@ -145,7 +147,7 @@ textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace
     if(!sail)return;
     if(!startTs){msg("Start the race first.","err");return}
     if(stopTs){msg("Timer is stopped. Reset to run a new race.","err");return}
-    for(var i=0;i<finishes.length;i++)if(finishes[i].sail===sail){msg("Sail "+sail+" already finished at "+fmt(finishes[i].ms),"err");return}
+    for(var i=0;i<finishes.length;i++)if(finishes[i].sail===sail){var r0=finishes[i];if(r0.status==="DNS"){msg("Sail "+sail+" is marked DNS. Delete it first.","err");return}if(r0.status==="DQ"&&r0.ms==null){var t1=at||Date.now();r0.ms=Math.max(0,t1-startTs);r0.t=t1;lastNew=i;save();render();beep();msg("✓ Sail "+sail+" (DQ) · "+fmt(r0.ms),"ok");return}msg("Sail "+sail+" already finished at "+fmt(r0.ms),"err");return}
     var t=at||Date.now();
     finishes.push({sail:sail,ms:Math.max(0,t-startTs),t:t});
     lastNew=finishes.length-1;save();render();beep();
@@ -156,17 +158,35 @@ textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace
     for(var i=0;i<finishes.length;i++)if(finishes[i].sail===sail){finishes.splice(i,1);lastNew=-1;save();render();msg("Deleted sail "+sail,"ok");return}
     msg("Sail "+sail+" isn’t in the results.","err");
   }
+  function markSail(sail,s){
+    var rec=null,i;
+    if(sail==null||sail===""){i=finishes.length-1;rec=finishes[i];if(!rec){msg("No boat to mark yet.","err");return}sail=rec.sail}
+    else{sail=norm(sail);if(!sail)return;for(i=0;i<finishes.length;i++)if(finishes[i].sail===sail){rec=finishes[i];break}}
+    if(rec){rec.status=s;if(s==="DNS"){rec.ms=null;rec.t=null}}
+    else{finishes.push({sail:sail,status:s,ms:null,t:null});i=finishes.length-1}
+    lastNew=i;save();render();beep();
+    msg("Sail "+sail+" marked "+s+(rec&&s==="DQ"&&rec.ms!=null?" · keeps finish time "+fmt(rec.ms):""),"ok");
+  }
   function undo(){if(!finishes.length){msg("Nothing to undo.","err");return}var f=finishes.pop();lastNew=-1;save();render();msg("Removed sail "+f.sail,"ok")}
 
+  function ord(list){
+    var g=function(x){return x.f.status==="DNS"?3:x.f.status==="DQ"?(x.f.ms!=null?1:2):0};
+    return list.map(function(f,i){return {f:f,i:i}}).sort(function(x,y){var d=g(x)-g(y);if(d)return d;if(g(x)===1)return x.f.ms-y.f.ms;return x.i-y.i});
+  }
+  function rowsText(list){var pc=0;return ord(list).map(function(o){var f=o.f;return (f.status?f.status:++pc)+","+f.sail+","+(f.ms!=null?fmt(f.ms):"")+","+(f.t?clk(f.t):"")})}
+  function counts(){
+    var q=finishes.filter(function(f){return f.status==="DQ"}).length,n=finishes.filter(function(f){return f.status==="DNS"}).length;
+    return (finishes.length-q-n)+" finished"+(q?" · "+q+" DQ":"")+(n?" · "+n+" DNS":"");
+  }
   function render(){
     $("startBtn").disabled=!!startTs;
     $("stopBtn").disabled=!startTs||!!stopTs;
-    $("state").textContent=startTs?(stopTs?"Stopped":"Running")+" · started "+clk(startTs)+" ("+TZ+") · "+finishes.length+" finished":"Ready · times shown in "+TZ;
+    $("state").textContent=startTs?(stopTs?"Stopped":"Running")+" · started "+clk(startTs)+" ("+TZ+") · "+counts():"Ready · times shown in "+TZ;
     var tb=$("rows");tb.innerHTML="";
     if(!finishes.length){var tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=5;td.className="empty";td.textContent="No finishers yet";tr.appendChild(td);tb.appendChild(tr);return}
-    finishes.forEach(function(f,i){
+    var pc=0;ord(finishes).forEach(function(o){var f=o.f,i=o.i,pos=f.status?f.status:++pc;
       var tr=document.createElement("tr");if(i===lastNew)tr.className="new";
-      [i+1,f.sail,fmt(f.ms),clk(f.t)].forEach(function(v,j){var td=document.createElement("td");td.textContent=v;if(j===1)td.className="sail";tr.appendChild(td)});
+      [pos,f.sail,f.ms!=null?fmt(f.ms):"—",f.t?clk(f.t):"—"].forEach(function(v,j){var td=document.createElement("td");td.textContent=v;if(j===1)td.className="sail";tr.appendChild(td)});
       var td=document.createElement("td"),b=document.createElement("button");b.textContent="✕";b.setAttribute("aria-label","Remove sail "+f.sail);
       b.onclick=function(){finishes.splice(i,1);lastNew=-1;save();render()};td.appendChild(b);tr.appendChild(td);tb.appendChild(tr);
     });
@@ -177,9 +197,9 @@ textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace
   var T={ten:10,eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,sixteen:16,seventeen:17,eighteen:18,nineteen:19};
   var D={twenty:2,thirty:3,forty:4,fifty:5,sixty:6,seventy:7,eighty:8,ninety:9};
   function parse(text){
-    var s=text.toLowerCase().replace(/(\d)[,\s](?=\d{3}\b)/g,"$1").replace(/[^a-z0-9]+/g," ").trim();
-    var tk=s?s.split(" "):[],cmds=[],cur="",del=false;
-    function emit(n){cmds.push({c:del?"del":"fin",n:n});del=false}
+    var s=text.toLowerCase().replace(/(\d)[,\s](?=\d{3}\b)/g,"$1").replace(/[^a-z0-9]+/g," ").trim().replace(/\bd n s\b/g,"dns").replace(/\bd q\b/g,"dq").replace(/\bdisqualif\w*/g,"dq").replace(/\bdid not start\b/g,"dns");
+    var tk=s?s.split(" "):[],cmds=[],cur="",del=false,st=null;
+    function emit(n){if(del)cmds.push({c:"del",n:n});else if(st)cmds.push({c:"mark",n:n,s:st});else cmds.push({c:"fin",n:n});del=false;st=null}
     function flush(){if(cur){emit(cur);cur=""}}
     for(var i=0;i<tk.length;i++){
       var t=tk[i];
@@ -187,6 +207,7 @@ textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace
       else if(U.hasOwnProperty(t))cur+=U[t];
       else if(T.hasOwnProperty(t))cur+=T[t];
       else if(D.hasOwnProperty(t)){cur+=D[t];var n=tk[i+1];if(n&&U.hasOwnProperty(n)&&U[n]>0){cur+=U[n];i++}else cur+="0"}
+      else if(t==="dns"||t==="dq"){var S=t.toUpperCase();if(cur){var m=cur;cur="";cmds.push({c:"mark",n:m,s:S})}else{var lc=cmds[cmds.length-1];if(lc&&lc.c==="fin"){lc.c="mark";lc.s=S}else st=S}}
       else if(t==="start"||t==="go"){flush();cmds.push({c:"start"})}
       else if(t==="stop"){flush();cmds.push({c:"stop"})}
       else if(t==="reset"){flush();cmds.push({c:"reset"})}
@@ -194,13 +215,13 @@ textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace
       else if(t==="delete"||t==="remove"){flush();del=true}
       else flush();
     }
-    flush();return cmds;
+    flush();if(st){cmds.push({c:"mark",n:null,s:st});st=null}return cmds;
   }
   function handleSpeech(text,at){
     $("heard").textContent="Heard: "+text;
     parse(text).forEach(function(k){
       if(k.c==="start")startRace();else if(k.c==="stop")stopRace();else if(k.c==="reset")doReset();
-      else if(k.c==="undo")undo();else if(k.c==="del")removeSail(k.n);else addFinish(k.n,at);
+      else if(k.c==="undo")undo();else if(k.c==="mark")markSail(k.n,k.s);else if(k.c==="del")removeSail(k.n);else addFinish(k.n,at);
     });
   }
 
@@ -264,6 +285,8 @@ textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace
   $("stopBtn").onclick=stopRace;
   $("undoBtn").onclick=undo;
   $("addBtn").onclick=function(){var v=$("sail").value.trim();if(v){addFinish(v);$("sail").value=""}$("sail").focus()};
+  $("dnsBtn").onclick=function(){var v=$("sail").value.trim();if(v){markSail(v,"DNS");$("sail").value=""}$("sail").focus()};
+  $("dqBtn").onclick=function(){var v=$("sail").value.trim();if(v){markSail(v,"DQ");$("sail").value=""}$("sail").focus()};
   $("sail").addEventListener("keydown",function(e){if(e.key==="Enter")$("addBtn").click()});
   $("resetBtn").onclick=function(){
     var b=$("resetBtn");
@@ -273,7 +296,7 @@ textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace
   };
   $("copyBtn").onclick=function(){
     var head="Regatta results"+(startTs?" · start "+new Date(startTs).toLocaleDateString()+" "+clk(startTs)+" ("+TZ+")":"");
-    var txt=[head,"Pos,Sail,Elapsed,Clock"].concat(finishes.map(function(f,i){return (i+1)+","+f.sail+","+fmt(f.ms)+","+clk(f.t)})).join("\n");
+    var txt=[head,"Pos,Sail,Elapsed,Clock"].concat(rowsText(finishes)).join("\n");
     var o=$("out");o.value=txt;o.hidden=false;o.select();
     try{navigator.clipboard.writeText(txt).then(function(){msg("Results copied.","ok")},function(){msg("Select the text below to copy.")})}catch(e){msg("Select the text below to copy.")}
   };
