@@ -39,6 +39,14 @@ td button{padding:2px 10px;min-height:36px;flex:none}
 textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px}
 .h{border-top:1px solid var(--line);padding:10px 0}.h summary{cursor:pointer;font-weight:600}.h pre{white-space:pre-wrap;font:13px ui-monospace,monospace;margin:8px 0}
 .help{color:var(--mute);font-size:13px;line-height:1.5;margin-top:8px}
+.thumbs{display:flex;gap:8px;overflow-x:auto;margin:8px 0}
+.thumbs figure{margin:0;flex:none;width:96px;font-size:11px;color:var(--mute);line-height:1.3;word-break:break-word}
+.thumbs img{width:96px;height:96px;object-fit:cover;border-radius:8px;border:1px solid var(--line);display:block;cursor:pointer}
+#viewer{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:60;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:calc(12px + env(safe-area-inset-top,0px)) 12px calc(12px + env(safe-area-inset-bottom,0px))}
+#viewer[hidden]{display:none}
+#viewer img{max-width:100%;max-height:68vh;max-height:68dvh;object-fit:contain;border-radius:8px}
+#vcap{color:#fff;text-align:center;font-size:15px}
+#viewer .row{width:100%;max-width:420px}
 html{-webkit-text-size-adjust:100%}
 body{-webkit-tap-highlight-color:transparent;overscroll-behavior-y:contain}
 button,input{touch-action:manipulation}
@@ -63,6 +71,7 @@ main{padding-left:max(12px,env(safe-area-inset-left));padding-right:max(12px,env
   #addBtn,#dnsBtn,#dqBtn{flex:1 1 30%}
   #posIn,#posSail{flex:1 1 40%}
   #posBtn{flex:1 1 100%}
+  #pnote,#photoBtn{flex:1 1 100%}
   th,td{padding:8px 3px;font-size:14px}
   td.sail{font-size:18px}
   td button{min-height:44px;padding:2px 12px}
@@ -108,6 +117,9 @@ main{padding-left:max(12px,env(safe-area-inset-left));padding-right:max(12px,env
     <thead><tr><th>Pos</th><th>Sail</th><th>Elapsed</th><th>Clock</th><th></th></tr></thead>
     <tbody id="rows"></tbody>
   </table></div>
+  <div class="row" style="margin-top:10px"><input id="pnote" placeholder="Photo note (optional), e.g. 1620 v 715" aria-label="Photo note"><button class="p" id="photoBtn">📷 Photo</button></div>
+  <input type="file" id="file" accept="image/*" capture="environment" hidden>
+  <div id="thumbs"></div>
   <div class="row" style="margin-top:10px">
     <button id="undoBtn">Undo last</button>
     <button id="copyBtn">Copy results</button>
@@ -121,6 +133,11 @@ main{padding-left:max(12px,env(safe-area-inset-left));padding-right:max(12px,env
 </div>
 </main>
 
+<div id="viewer" hidden>
+  <img id="vimg" alt="Finish photo">
+  <div id="vcap"></div>
+  <div class="row"><button id="vShare">Share / save</button><button id="vDel">Delete</button><button id="vClose">Close</button></div>
+</div>
 <div id="info" hidden>
 <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="infoT">
   <div class="sh"><b id="infoT">How to use the timer</b><button id="infoClose" aria-label="Close">✕</button></div>
@@ -146,6 +163,13 @@ main{padding-left:max(12px,env(safe-area-inset-left));padding-right:max(12px,env
     <li>Type a number in the <b>Sail number</b> box, then tap <b>Finish</b>, <b>DNS</b> or <b>DQ</b>.</li>
     <li>To fix positions, enter the <b>Position</b> and <b>Boat</b>, then tap <b>Set position</b>.</li>
     <li>The ✕ on a row removes that boat.</li>
+  </ul>
+  <h3>Photos for tight finishes</h3>
+  <ul>
+    <li>Log the finish first by voice or typing, then tap <b>📷 Photo</b>. Your phone’s camera opens. Allow the camera if asked, take the photo and confirm it.</li>
+    <li>Each photo is saved with the time you tapped the button (elapsed and clock time) and the optional note you typed, such as “1620 v 715”.</li>
+    <li>Tap a thumbnail to view it larger, share or save it, or delete it.</li>
+    <li>Photos stay on this device with their race and appear under that race in History. Deleting a race or clearing history deletes its photos.</li>
   </ul>
   <h3>Results and history</h3>
   <ul>
@@ -177,7 +201,7 @@ main{padding-left:max(12px,env(safe-area-inset-left));padding-right:max(12px,env
   function loadHist(){try{hist=JSON.parse(localStorage.getItem(HKEY)||"[]")||[]}catch(e){hist=[]}}
   function saveHist(){try{localStorage.setItem(HKEY,JSON.stringify(hist))}catch(e){}}
   function raceText(r){return ["Regatta results · start "+new Date(r.startTs).toLocaleDateString()+" "+clk(r.startTs)+" ("+TZ+")","Pos,Sail,Elapsed,Clock"].concat(rowsText(r.finishes)).join("\n")}
-  function archive(){if(startTs&&finishes.length){hist.unshift({id:Date.now(),startTs:startTs,stopTs:stopTs,finishes:finishes});saveHist();renderHist()}}
+  function archive(){if(!(startTs&&finishes.length))delPhotos(startTs||0);if(startTs&&finishes.length){hist.unshift({id:Date.now(),startTs:startTs,stopTs:stopTs,finishes:finishes});saveHist();renderHist()}}
   function arm(b,label,fn){
     if(!b.dataset.arm){b.dataset.arm="1";b.textContent="Tap again";b.className="warn";setTimeout(function(){delete b.dataset.arm;b.textContent=label;b.className=""},4000);return}
     delete b.dataset.arm;b.textContent=label;b.className="";fn();
@@ -187,12 +211,12 @@ main{padding-left:max(12px,env(safe-area-inset-left));padding-right:max(12px,env
     hist.forEach(function(r,idx){
       var d=document.createElement("details");d.className="h";
       var s=document.createElement("summary");s.textContent="Race "+(hist.length-idx)+" · "+new Date(r.startTs).toLocaleDateString()+" "+clk(r.startTs)+" · "+r.finishes.length+" boats";d.appendChild(s);
-      var pre=document.createElement("pre");pre.textContent=raceText(r);d.appendChild(pre);
+      var pre=document.createElement("pre");pre.textContent=raceText(r);d.appendChild(pre);d.appendChild(strip(r.startTs));
       var row=document.createElement("div");row.className="row";
       var c=document.createElement("button");c.textContent="Copy";
       c.onclick=function(){try{navigator.clipboard.writeText(raceText(r)).then(function(){msg("Race copied.","ok")},function(){msg("Select the text to copy.")})}catch(e){msg("Select the text to copy.")}};
       var x=document.createElement("button");x.textContent="Delete race";
-      x.onclick=function(){arm(x,"Delete race",function(){hist.splice(idx,1);saveHist();renderHist()})};
+      x.onclick=function(){arm(x,"Delete race",function(){delPhotos(r.startTs);hist.splice(idx,1);saveHist();renderHist()})};
       row.appendChild(c);row.appendChild(x);d.appendChild(row);box.appendChild(d);
     });
   }
@@ -269,7 +293,7 @@ main{padding-left:max(12px,env(safe-area-inset-left));padding-right:max(12px,env
     var q=finishes.filter(function(f){return f.status==="DQ"}).length,n=finishes.filter(function(f){return f.status==="DNS"}).length;
     return (finishes.length-q-n)+" finished"+(q?" · "+q+" DQ":"")+(n?" · "+n+" DNS":"");
   }
-  function render(){
+  function render(){renderThumbs();
     $("startBtn").disabled=!!startTs;
     $("stopBtn").disabled=!startTs||!!stopTs;
     $("state").textContent=startTs?(stopTs?"Stopped":"Running")+" · started "+clk(startTs)+" ("+TZ+") · "+counts():"Ready · times shown in "+TZ;
@@ -373,7 +397,7 @@ main{padding-left:max(12px,env(safe-area-inset-left));padding-right:max(12px,env
     catch(e){msg("Couldn’t start the microphone.","err")}
   };
 
-  $("clearHist").onclick=function(){var b=$("clearHist");arm(b,"Clear history",function(){hist=[];saveHist();renderHist();msg("History cleared.","ok")})};
+  $("clearHist").onclick=function(){var b=$("clearHist");arm(b,"Clear history",function(){hist=[];delPhotos("hist");saveHist();renderHist();msg("History cleared.","ok")})};
   function info(on){$("info").hidden=!on;$("infoBtn").setAttribute("aria-expanded",on?"true":"false");document.body.style.overflow=on?"hidden":"";if(on)$("infoClose").focus()}
   $("infoBtn").onclick=function(){info($("info").hidden)};
   $("infoClose").onclick=function(){info(false)};
@@ -400,8 +424,81 @@ main{padding-left:max(12px,env(safe-area-inset-left));padding-right:max(12px,env
     try{navigator.clipboard.writeText(txt).then(function(){msg("Results copied.","ok")},function(){msg("Select the text below to copy.")})}catch(e){msg("Select the text below to copy.")}
   };
 
+  var photos=[],pdb=null,tapT=0,thumbKey="",curP=null;
+  function pKey(){return startTs||0}
+  function purl(p){return p._u||(p._u=URL.createObjectURL(p.blob))}
+  function dbOpen(cb){
+    try{var q=indexedDB.open("regatta-photos",1);q.onupgradeneeded=function(){q.result.createObjectStore("p",{keyPath:"id"})};q.onsuccess=function(){pdb=q.result;cb()};q.onerror=function(){pdb=null;cb()}}catch(e){pdb=null;cb()}
+  }
+  function dbAll(cb){if(!pdb){cb([]);return}try{var r=pdb.transaction("p").objectStore("p").getAll();r.onsuccess=function(){cb(r.result||[])};r.onerror=function(){cb([])}}catch(e){cb([])}}
+  function dbPut(o,cb){if(!pdb){cb(false);return}try{var tx=pdb.transaction("p","readwrite");tx.objectStore("p").put(o);tx.oncomplete=function(){cb(true)};tx.onerror=function(){cb(false)}}catch(e){cb(false)}}
+  function dbDel(id){if(!pdb)return;try{pdb.transaction("p","readwrite").objectStore("p").delete(id)}catch(e){}}
+  function shrink(file,cb){
+    try{
+      var u=URL.createObjectURL(file),im=new Image();
+      im.onload=function(){var s=Math.min(1,1600/Math.max(im.naturalWidth,im.naturalHeight)),c=document.createElement("canvas");c.width=Math.round(im.naturalWidth*s);c.height=Math.round(im.naturalHeight*s);c.getContext("2d").drawImage(im,0,0,c.width,c.height);URL.revokeObjectURL(u);c.toBlob(function(b){cb(b||file)},"image/jpeg",0.8)};
+      im.onerror=function(){URL.revokeObjectURL(u);cb(file)};
+      im.src=u;
+    }catch(e){cb(file)}
+  }
+  function strip(key){
+    var list=photos.filter(function(p){return p.race===key}).sort(function(a,b){return a.t-b.t});
+    if(!list.length)return document.createElement("span");
+    var box=document.createElement("div");box.className="thumbs";
+    list.forEach(function(p){
+      var fg=document.createElement("figure"),im=document.createElement("img"),cp=document.createElement("div");
+      im.src=purl(p);im.alt="Finish photo";im.onclick=function(){openV(p)};
+      cp.textContent=(p.ms!=null?fmt(p.ms):clk(p.t))+(p.note?" · "+p.note:"");
+      fg.appendChild(im);fg.appendChild(cp);box.appendChild(fg);
+    });
+    return box;
+  }
+  function renderThumbs(){
+    var key=pKey()+":"+photos.map(function(p){return p.id}).join(",");
+    if(key===thumbKey)return;thumbKey=key;
+    var t=$("thumbs");t.innerHTML="";t.appendChild(strip(pKey()));
+  }
+  function removeP(id){
+    for(var i=0;i<photos.length;i++)if(photos[i].id===id){if(photos[i]._u)URL.revokeObjectURL(photos[i]._u);photos.splice(i,1);break}
+    dbDel(id);thumbKey="";renderThumbs();renderHist();
+  }
+  function delPhotos(key){
+    var keep=[];
+    photos.forEach(function(p){
+      if(p.race===key||(key==="hist"&&p.race!==pKey())){if(p._u)URL.revokeObjectURL(p._u);dbDel(p.id)}else keep.push(p);
+    });
+    photos=keep;thumbKey="";renderThumbs();
+  }
+  function openV(p){
+    curP=p;$("vimg").src=purl(p);
+    $("vcap").textContent=(p.ms!=null?"Elapsed "+fmt(p.ms)+" · ":"")+clk(p.t)+(p.note?" · "+p.note:"");
+    $("viewer").hidden=false;
+  }
+  $("photoBtn").onclick=function(){tapT=Date.now();$("file").value="";$("file").click()};
+  $("file").onchange=function(){
+    var f=this.files&&this.files[0];if(!f)return;
+    var tt=tapT||Date.now();msg("Saving photo…");
+    shrink(f,function(b){
+      var p={id:Date.now()+"-"+Math.floor(Math.random()*1000),race:pKey(),t:tt,ms:startTs?tt-startTs:null,note:$("pnote").value.trim(),blob:b};
+      photos.push(p);
+      dbPut(p,function(ok){msg(ok?"📷 Photo saved · "+(p.ms!=null?fmt(p.ms):clk(p.t)):"Photo kept for this session only.",ok?"ok":"err")});
+      $("pnote").value="";thumbKey="";renderThumbs();$("file").value="";
+    });
+  };
+  $("vClose").onclick=function(){$("viewer").hidden=true};
+  $("vDel").onclick=function(){var b=$("vDel");arm(b,"Delete",function(){var id=curP.id;$("viewer").hidden=true;removeP(id)})};
+  $("vShare").onclick=function(){
+    try{
+      var f=new File([curP.blob],"finish-photo.jpg",{type:"image/jpeg"});
+      if(navigator.canShare&&navigator.canShare({files:[f]}))navigator.share({files:[f],text:$("vcap").textContent}).catch(function(){});
+      else $("vcap").textContent+=" · press and hold the photo to save it";
+    }catch(e){$("vcap").textContent+=" · press and hold the photo to save it"}
+  };
+  document.addEventListener("keydown",function(e){if(e.key==="Escape")$("viewer").hidden=true});
+  function initPhotos(){dbOpen(function(){dbAll(function(a){photos=a;thumbKey="";renderThumbs();renderHist()})})}
+
   if(location.protocol!=="https:"){var n=$("note");n.hidden=false;n.textContent="This page isn’t on https, so the browser may ask for the microphone again and again. Host the file on an https address (e.g. Netlify Drop) to fix that."}
-  load();loadHist();runTimer();render();renderHist();
+  load();loadHist();runTimer();render();renderHist();initPhotos();
 })();
 </script>
 </body>
