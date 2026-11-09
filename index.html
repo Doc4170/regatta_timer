@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <title>Regatta Finish Timer</title>
 <style>
 :root{--bg:#f4f7fa;--card:#fff;--ink:#12263a;--mute:#5d7184;--line:#d9e2ea;--acc:#0b6fb8;--accink:#fff;--ok:#1b8a5a;--bad:#c23b3b;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
@@ -36,10 +39,39 @@ td button{padding:2px 10px;min-height:36px;flex:none}
 textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px}
 .h{border-top:1px solid var(--line);padding:10px 0}.h summary{cursor:pointer;font-weight:600}.h pre{white-space:pre-wrap;font:13px ui-monospace,monospace;margin:8px 0}
 .help{color:var(--mute);font-size:13px;line-height:1.5;margin-top:8px}
+html{-webkit-text-size-adjust:100%}
+body{-webkit-tap-highlight-color:transparent;overscroll-behavior-y:contain}
+button,input{touch-action:manipulation}
+main{padding-left:max(12px,env(safe-area-inset-left));padding-right:max(12px,env(safe-area-inset-right))}
+.top{display:flex;justify-content:space-between;align-items:center;margin:2px 2px 8px}
+.top span{font-weight:700;color:var(--mute);letter-spacing:.04em;text-transform:uppercase;font-size:14px}
+#infoBtn{flex:none;width:44px;min-height:44px;border-radius:50%;padding:0;font:italic 700 20px Georgia,serif}
+#info{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:50;display:flex;align-items:flex-end;justify-content:center}
+#info[hidden]{display:none}
+.sheet{background:var(--card);color:var(--ink);width:100%;max-width:560px;max-height:88vh;max-height:88dvh;overflow:auto;border-radius:16px 16px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px))}
+.sh{display:flex;justify-content:space-between;align-items:center;position:sticky;top:-16px;background:var(--card);padding:4px 0 8px;font-size:18px}
+#infoClose{flex:none;min-height:44px;min-width:44px;padding:0}
+.sheet h3{margin:14px 0 6px;font-size:15px;color:var(--acc)}
+.sheet ul,.sheet ol{margin:0;padding-left:20px}
+.sheet li{margin:5px 0;line-height:1.45;font-size:15px}
+@media (max-width:480px){
+  main{padding-top:8px;padding-bottom:8px}
+  .card{padding:12px;margin-bottom:8px}
+  button{min-height:54px;font-size:16px}
+  #micBtn{flex-basis:100%}
+  #sail{flex:1 1 100%}
+  #addBtn,#dnsBtn,#dqBtn{flex:1 1 30%}
+  #posIn,#posSail{flex:1 1 40%}
+  #posBtn{flex:1 1 100%}
+  th,td{padding:8px 3px;font-size:14px}
+  td.sail{font-size:18px}
+  td button{min-height:44px;padding:2px 12px}
+}
 </style>
 </head>
 <body>
 <main>
+<div class="top"><span>⛵ Regatta timer</span><button id="infoBtn" aria-label="Instructions" aria-expanded="false">i</button></div>
 <div class="card">
   <div id="clock">00:00:00.0</div>
   <div id="state"></div>
@@ -54,7 +86,7 @@ textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace
   <div id="msg"></div>
   <div id="heard"></div>
   <div id="note" hidden></div>
-  <div class="help">Say: “start race”, then each sail number. Pause a second or say “next” between boats. “1620 DQ” or “398 DNS” marks a boat. A DQ boat can still get a finish time and is placed after all other boats. “Delete 1620”, “undo”, “finish race” (stops the timer), “reset race”. Afterwards say “position 4 boat 1620” to move a boat. Times stay with the position, only the boat number moves.</div>
+  <div class="help">Tap the <b>i</b> button at the top for all voice commands and instructions.</div>
 </div>
 
 <div class="card">
@@ -89,6 +121,46 @@ textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace
 </div>
 </main>
 
+<div id="info" hidden>
+<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="infoT">
+  <div class="sh"><b id="infoT">How to use the timer</b><button id="infoClose" aria-label="Close">✕</button></div>
+  <h3>Quick start</h3>
+  <ol>
+    <li>Tap <b>Voice</b> and allow the microphone.</li>
+    <li>Say “start race”, or tap <b>Start race</b>.</li>
+    <li>Say each sail number as the boat crosses the line. Pause for a second, or say “next”, between boats.</li>
+    <li>Say “finish race”, or tap <b>Finish race</b>, to stop the clock.</li>
+  </ol>
+  <h3>Voice commands</h3>
+  <ul>
+    <li><b>“start race”</b> starts the clock.</li>
+    <li><b>“1620”</b> or <b>“sixteen twenty”</b> logs that boat with its elapsed time and clock time.</li>
+    <li><b>“1620 DQ”</b> or <b>“398 DNS”</b> marks a boat. A DQ boat can still get a finish time (say its number as a normal finish) and is placed after all other boats. DNS boats are listed last.</li>
+    <li><b>“delete 1620”</b> removes that boat. <b>“undo”</b> removes the last entry, or undoes a position change.</li>
+    <li><b>“finish race”</b> (or “stop”) stops the clock.</li>
+    <li><b>“position 4 boat 1620”</b> moves a boat into position 4 after the race. Times stay with the positions and only the boat number moves. If the boat was already placed, the two boats swap.</li>
+    <li><b>“reset race”</b> clears the race straight away and saves it to History.</li>
+  </ul>
+  <h3>Typing instead</h3>
+  <ul>
+    <li>Type a number in the <b>Sail number</b> box, then tap <b>Finish</b>, <b>DNS</b> or <b>DQ</b>.</li>
+    <li>To fix positions, enter the <b>Position</b> and <b>Boat</b>, then tap <b>Set position</b>.</li>
+    <li>The ✕ on a row removes that boat.</li>
+  </ul>
+  <h3>Results and history</h3>
+  <ul>
+    <li><b>Copy results</b> copies the finish list with elapsed and clock times.</li>
+    <li>When you reset a race that has results, it is saved under <b>History</b> on this device until you delete it or tap <b>Clear history</b>.</li>
+  </ul>
+  <h3>Tips</h3>
+  <ul>
+    <li>Voice needs an internet connection. Keep the page open with the screen on.</li>
+    <li>The time is stamped when the phone hears you, so it can lag by about a second. For very close finishes, type the number.</li>
+    <li>If the phone keeps asking for the microphone, use the https web address of the page and choose Allow.</li>
+    <li>Do a short practice run before race day.</li>
+  </ul>
+</div>
+</div>
 <script>
 (function(){
   var HKEY="regatta-history-v1",hist=[],KEY="regatta-v2",startTs=null,stopTs=null,finishes=[],timer=null,rec=null,listening=false,lastNew=-1,wake=null,actx=null;
@@ -302,6 +374,11 @@ textarea{width:100%;height:120px;margin-top:8px;font:13px ui-monospace,monospace
   };
 
   $("clearHist").onclick=function(){var b=$("clearHist");arm(b,"Clear history",function(){hist=[];saveHist();renderHist();msg("History cleared.","ok")})};
+  function info(on){$("info").hidden=!on;$("infoBtn").setAttribute("aria-expanded",on?"true":"false");document.body.style.overflow=on?"hidden":"";if(on)$("infoClose").focus()}
+  $("infoBtn").onclick=function(){info($("info").hidden)};
+  $("infoClose").onclick=function(){info(false)};
+  $("info").addEventListener("click",function(e){if(e.target===$("info"))info(false)});
+  document.addEventListener("keydown",function(e){if(e.key==="Escape")info(false)});
   $("startBtn").onclick=startRace;
   $("stopBtn").onclick=stopRace;
   $("undoBtn").onclick=undo;
